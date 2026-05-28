@@ -326,19 +326,30 @@ def audit_history(issue: dict[str, Any]) -> list[dict[str, Any]]:
     return list(embed.get("auditHistory") or [])
 
 
+def _audit_row_sort_key(row: dict[str, Any]) -> tuple:
+    """Order audit rows so the latest change per attribute wins."""
+    seq = row.get("seqNumber")
+    if seq is not None:
+        return (0, int(seq))
+    return (1, str(row.get("auditTime") or ""))
+
+
 def tags_from_issue(issue: dict[str, Any]) -> list[str]:
-    seen: set[str] = set()
-    tags: list[str] = []
+    # ArmorCode allows one value per tag key per finding. If audit history has
+    # multiple rows for the same attributeName (e.g. Analysis changed twice),
+    # keep only the latest row (highest seqNumber / auditTime).
+    latest_by_attr: dict[str, tuple[tuple, str]] = {}
     for row in audit_history(issue):
         attr = (row.get("attributeName") or "").strip()
         val = (row.get("newValue") or "").strip()
         if not attr or not val:
             continue
         literal = f"{TAG_PREFIX}{attr}: {val}"
-        if literal not in seen:
-            seen.add(literal)
-            tags.append(literal)
-    return tags
+        sort_key = _audit_row_sort_key(row)
+        prev = latest_by_attr.get(attr)
+        if prev is None or sort_key >= prev[0]:
+            latest_by_attr[attr] = (sort_key, literal)
+    return [latest_by_attr[attr][1] for attr in sorted(latest_by_attr)]
 
 
 def build_tool_index(
